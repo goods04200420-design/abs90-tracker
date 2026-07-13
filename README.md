@@ -102,10 +102,15 @@
 
 데이터는 그 폰 브라우저에만 저장됨(localStorage). 기종 바꿀 땐 설정→백업으로 파일 옮기기.
 
-### 폰에서 쓰기 (배포)
-가장 쉬운 방법 — 이 폴더를 정적 호스팅에 올리면 URL로 폰에서 접속:
-1. **Netlify Drop**: https://app.netlify.com/drop 에 이 폴더 통째로 드래그 → URL 생성
-2. 또는 **GitHub Pages**: 이 폴더를 repo에 올리고 Pages 켜기
-3. 폰 브라우저로 URL 접속 → 공유 → "홈 화면에 추가" → 앱처럼 실행 + 오프라인 동작
+### 배포 (Cloudflare Tunnel)
+로컬 정적 서버를 Cloudflare Tunnel(`codex-mobile`)로 외부에 노출한다.
 
-로컬 테스트: 이 폴더에서 `python -m http.server 8899` → `http://localhost:8899`
+- 외부 주소: **https://abs.get1004.com** → `localhost:8792`
+- 서버 실행:
+  - 수동(창 보임): `start-server.bat` 더블클릭 → `http://localhost:8792`
+  - 상시(창 없음): `server-hidden.vbs` (Windows 시작프로그램에 바로가기 등록됨 → 로그인 시 자동 실행)
+- Cloudflare Zero Trust → Tunnels → `codex-mobile` → Public Hostname:
+  `abs` / `get1004.com` / HTTP / `localhost:8792`, Access로 허용 이메일 제한
+- 폰에서 https://abs.get1004.com 접속 → "홈 화면에 추가" → 앱처럼 실행
+
+데이터는 각 폰 브라우저 localStorage에만 저장(서버는 정적 파일만 서빙). 기종 변경 시 설정→백업.
