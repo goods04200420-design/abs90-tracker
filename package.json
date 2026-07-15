@@ -1,0 +1,16 @@
+{
+  "name": "abs90-tracker",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node ./node_modules/wrangler/bin/wrangler.js dev --local --port 8792",
+    "check": "node --check src/worker.js",
+    "db:local": "node ./node_modules/wrangler/bin/wrangler.js d1 migrations apply abs90-db --local",
+    "db:remote": "node ./node_modules/wrangler/bin/wrangler.js d1 migrations apply abs90-db --remote",
+    "deploy": "node ./node_modules/wrangler/bin/wrangler.js deploy"
+  },
+  "devDependencies": {
+    "wrangler": "^4.110.0"
+  }
+}

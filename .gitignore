@@ -5,3 +5,9 @@ abs90-backup-*.json
 Thumbs.db
 .DS_Store
 desktop.ini
+
+# Node / Wrangler local state and secrets
+node_modules/
+.wrangler/
+.dev.vars
+.dev.vars.*

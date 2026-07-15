@@ -1,9 +1,14 @@
-const CACHE='abs90-v2';
-const ASSETS=['./index.html','./manifest.json','./icon.svg'];
+const CACHE='abs90-v8';
+const ASSETS=['./index.html','./login.html','./manifest.json','./icon.svg'];
 self.addEventListener('install',e=>{e.waitUntil(caches.open(CACHE).then(c=>c.addAll(ASSETS)));self.skipWaiting();});
 self.addEventListener('activate',e=>{e.waitUntil(caches.keys().then(ks=>Promise.all(ks.filter(k=>k!==CACHE).map(k=>caches.delete(k)))));self.clients.claim();});
 self.addEventListener('fetch',e=>{
   const req=e.request;
+  const url=new URL(req.url);
+  if(url.pathname.startsWith('/api/')){
+    e.respondWith(fetch(req));
+    return;
+  }
   const isDoc = req.mode==='navigate' || req.destination==='document' || req.url.includes('index.html');
   if(isDoc){
     // 네트워크 우선: 항상 최신 앱을 받고, 오프라인이면 캐시 사용

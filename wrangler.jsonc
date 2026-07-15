@@ -1,0 +1,29 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "abs90-tracker",
+  "main": "src/worker.js",
+  "compatibility_date": "2026-07-14",
+  "routes": [
+    {
+      "pattern": "fit.get1004.com/*",
+      "zone_name": "get1004.com"
+    },
+    {
+      "pattern": "abs.get1004.com",
+      "custom_domain": true
+    }
+  ],
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS",
+    "run_worker_first": true
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "abs90-db",
+      "database_id": "4b024a76-2dde-42b5-9f08-691488cb73d5"
+    }
+  ],
+  "vars": {}
+}

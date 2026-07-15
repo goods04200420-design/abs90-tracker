@@ -125,6 +125,15 @@ button.mini{padding:8px 12px;font-size:13px}
 }
 :root[data-theme="light"] .nav{background:rgba(242,245,249,.92)}
 :root[data-theme="light"] .streak{color:#d97706}
+/* 네비 7개 대응 */
+.nav button{font-size:10px;padding:6px 1px}
+.nav button .i{font-size:19px}
+/* 그래프 */
+.gwrap{width:100%;background:var(--card2);border:1px solid var(--line);border-radius:14px;padding:6px 4px}
+.gsvg{width:100%;height:auto;display:block}
+.chip.on{background:var(--acc);color:#07130b;border-color:var(--acc)}
+.chip.on small{color:#07130b}
+.gempty{color:var(--sub);font-size:13px;text-align:center;padding:48px 0}
 </style>
 
 <div class="hdr">
@@ -352,6 +361,28 @@ button.mini{padding:8px 12px;font-size:13px}
  </div>
 </div>
 
+<!-- ===== 그래프 ===== -->
+<div class="tab" id="tab-graph">
+ <div class="wrap">
+  <div class="card">
+    <h3 id="gTitle">추이 그래프</h3>
+    <div class="seg" id="graphRange">
+      <button data-d="7" onclick="setGraphRange(7)">7일</button>
+      <button data-d="14" onclick="setGraphRange(14)">14일</button>
+      <button data-d="30" onclick="setGraphRange(30)">30일</button>
+      <button data-d="90" onclick="setGraphRange(90)">90일</button>
+      <button data-d="all" onclick="setGraphRange('all')">전체</button>
+    </div>
+    <label>보고 싶은 지표 선택</label>
+    <div class="chips metricchips" id="graphMetrics" style="margin-bottom:12px"></div>
+    <div class="gwrap"><svg class="gsvg" id="gChart" viewBox="0 0 320 200"></svg></div>
+    <div class="gempty" id="gEmpty" style="display:none"></div>
+    <div class="grid3" id="gStats" style="margin-top:12px"></div>
+    <div class="hint" id="gHint" style="margin-top:10px"></div>
+  </div>
+ </div>
+</div>
+
 <!-- ===== 주간 ===== -->
 <div class="tab" id="tab-week">
  <div class="wrap">
@@ -421,12 +452,16 @@ button.mini{padding:8px 12px;font-size:13px}
   </div>
   <div class="card">
     <h3>데이터</h3>
+    <div id="syncInfo" class="hint" style="margin-bottom:10px">☁️ 동기화 확인 중…</div>
+    <button class="ghost" style="width:100%;margin-bottom:10px" onclick="logoutAccount()">로그아웃</button>
+    <button style="width:100%;margin-bottom:10px" onclick="shareData()">🔗 저장 내용 공유 링크 만들기</button>
+    <button class="ghost" style="width:100%;margin-bottom:10px" onclick="migrateToCloud()">☁️ 이 기기 기록을 내 계정으로 옮기기</button>
     <div class="row">
       <button class="ghost" onclick="exportData()">백업(내보내기)</button>
       <button class="ghost" onclick="document.getElementById('imp').click()">복원(가져오기)</button>
     </div>
     <input id="imp" type="file" accept="application/json" style="display:none" onchange="importData(event)">
-    <div class="hint" style="margin-top:8px">데이터는 이 폰(브라우저)에만 저장돼요. 기종 바꾸면 백업파일로 옮기세요.</div>
+    <div class="hint" style="margin-top:8px">공유 링크에는 기록이 들어 있어 링크를 받은 사람이 볼 수 있어요. 용량과 개인정보 보호를 위해 바디 사진은 제외됩니다.</div>
   </div>
  </div>
 </div>
@@ -435,6 +470,7 @@ button.mini{padding:8px 12px;font-size:13px}
   <button class="on" data-tab="home" onclick="go('home')"><span class="i">📊</span>대시보드</button>
   <button data-tab="log" onclick="go('log')"><span class="i">✍️</span>기록</button>
   <button data-tab="food" onclick="go('food')"><span class="i">🍽️</span>식단</button>
+  <button data-tab="graph" onclick="go('graph')"><span class="i">📈</span>그래프</button>
   <button data-tab="cal" onclick="go('cal')"><span class="i">📅</span>캘린더</button>
   <button data-tab="week" onclick="go('week')"><span class="i">📏</span>주간</button>
   <button data-tab="set" onclick="go('set')"><span class="i">⚙️</span>설정</button>
@@ -562,9 +598,14 @@ const FOODDB = [
 ];
 
 /* ================= 저장소 ================= */
+let syncTimer=null, syncReady=false, syncBusy=false, syncQueued=false, syncApplying=false, syncInitBusy=false;
+let syncVersion=0, syncBase={}, syncUserKey='';
 const DB = {
   get(){ return JSON.parse(localStorage.getItem('abs90')||'{}'); },
-  set(o){ localStorage.setItem('abs90', JSON.stringify(o)); },
+  set(o){
+    localStorage.setItem('abs90', JSON.stringify(o));
+    if(syncReady&&!syncApplying) scheduleSync();
+  },
 };
 function state(){
   const s = DB.get();
@@ -572,6 +613,97 @@ function state(){
   s.days = s.days||{};
   s.weekly = s.weekly||{};
   return s;
+}
+function clone(v){ return v===undefined?undefined:JSON.parse(JSON.stringify(v)); }
+function same(a,b){ return JSON.stringify(a)===JSON.stringify(b); }
+function plain(v){ return v&&typeof v==='object'&&!Array.isArray(v); }
+function cleanForSync(source){
+  const out=clone(source||{}); out.profile=out.profile||{}; out.days=out.days||{}; out.weekly=out.weekly||{};
+  Object.values(out.weekly).forEach(w=>delete w.photos);
+  return out;
+}
+function withLocalPhotos(source,local){
+  const out=clone(source||{}); out.weekly=out.weekly||{};
+  Object.entries((local&&local.weekly)||{}).forEach(([wk,v])=>{
+    if(v.photos&&v.photos.length){ out.weekly[wk]=out.weekly[wk]||{}; out.weekly[wk].photos=clone(v.photos); }
+  });
+  return out;
+}
+// 마지막 동기화본을 기준으로 PC/폰 양쪽 변경을 재귀 병합한다. 배열이 동시에 바뀐 경우 현재 기기 입력을 우선한다.
+function mergeThreeWay(base,local,remote){
+  if(same(local,base))return clone(remote);
+  if(same(remote,base))return clone(local);
+  if(plain(local)&&plain(remote)){
+    const out={}, keys=new Set([...Object.keys(base||{}),...Object.keys(local),...Object.keys(remote)]);
+    keys.forEach(k=>{ const v=mergeThreeWay(base&&base[k],local[k],remote[k]); if(v!==undefined)out[k]=v; });
+    return out;
+  }
+  return clone(local);
+}
+function setSyncStatus(text,email=''){
+  dayMeta.textContent='ABS90 · '+text;
+  if(typeof syncInfo!=='undefined'&&syncInfo) syncInfo.textContent=`☁️ ${text}${email?' · '+email:''}`;
+}
+function syncMeta(){ try{return JSON.parse(localStorage.getItem('abs90-sync')||'{}');}catch{return{};} }
+function saveSyncMeta(){
+  try{ localStorage.setItem('abs90-sync',JSON.stringify({version:syncVersion,base:syncBase,userKey:syncUserKey})); }catch{}
+}
+function scheduleSync(){ clearTimeout(syncTimer); syncTimer=setTimeout(pushSync,700); setSyncStatus('저장 대기 중'); }
+async function apiState(method='GET',body){
+  const res=await fetch('/api/state?ts='+Date.now(),{method,credentials:'same-origin',cache:'no-store',headers:body?{'content-type':'application/json'}:{},body:body?JSON.stringify(body):undefined});
+  if(res.status===401){ location.replace('/login'); throw new Error('로그인이 필요합니다'); }
+  const type=res.headers.get('content-type')||'';
+  if(!type.includes('application/json'))throw new Error('동기화 API 없음');
+  const data=await res.json(); return {res,data};
+}
+async function logoutAccount(){
+  try{ await fetch('/api/auth/logout',{method:'POST',credentials:'same-origin',cache:'no-store'}); }
+  finally{ location.replace('/login'); }
+}
+async function initSync(){
+  if(syncInitBusy)return; syncInitBusy=true; setSyncStatus('동기화 확인 중…');
+  try{
+    const {res,data}=await apiState(); if(!res.ok)throw new Error(data.error||'동기화 실패');
+    const localState=state(), local=cleanForSync(localState), meta=syncMeta();
+    const changedUser=!!(meta.userKey&&data.userKey&&meta.userKey!==data.userKey);
+    const deviceState=changedUser?cleanForSync({}):local;
+    syncUserKey=data.userKey||'';
+    syncVersion=Number(data.version||0);
+    if(data.state){
+      const remote=cleanForSync(data.state), base=meta.base||{};
+      const merged=changedUser?remote:mergeThreeWay(base,deviceState,remote);
+      syncBase=remote; syncApplying=true; DB.set(changedUser?merged:withLocalPhotos(merged,localState)); syncApplying=false;
+      saveSyncMeta(); render(); syncReady=true;
+      if(!same(merged,remote))scheduleSync(); else setSyncStatus('동기화 완료',data.email);
+    }else{
+      syncBase={}; syncReady=true;
+      if(changedUser){ syncApplying=true; DB.set({}); syncApplying=false; render(); }
+      saveSyncMeta();
+      if(!changedUser&&(Object.keys(local.days||{}).length||Object.keys(local.profile||{}).length||Object.keys(local.weekly||{}).length)) await pushSync();
+      else setSyncStatus('동기화 완료',data.email);
+    }
+  }catch(e){ syncReady=false; setSyncStatus(e.message==='동기화 API 없음'?'이 기기에 저장 중':'동기화 연결 실패'); }
+  finally{ syncInitBusy=false; }
+}
+async function pushSync(){
+  clearTimeout(syncTimer); syncTimer=null;
+  if(!syncReady)return; if(syncBusy){syncQueued=true;return;} syncBusy=true;
+  const local=cleanForSync(state());
+  if(same(local,syncBase)){ syncBusy=false; setSyncStatus('동기화 완료'); return; }
+  setSyncStatus('서버에 저장 중…');
+  try{
+    const {res,data}=await apiState('PUT',{state:local,version:syncVersion});
+    if(res.status===409){
+      const remote=cleanForSync(data.state||{}), merged=mergeThreeWay(syncBase,local,remote);
+      syncVersion=Number(data.version||0); syncBase=remote; syncApplying=true;
+      DB.set(withLocalPhotos(merged,state())); syncApplying=false; saveSyncMeta(); render(); syncQueued=true;
+    }else if(!res.ok)throw new Error(data.error||'저장 실패');
+    else{ syncVersion=Number(data.version); syncBase=local; saveSyncMeta(); setSyncStatus('동기화 완료',data.email); }
+  }catch(e){ setSyncStatus(e.message==='Record is too large'?'기록 용량 초과':'오프라인 · 기기에 저장됨'); }
+  finally{
+    syncBusy=false;
+    if(syncQueued){syncQueued=false;scheduleSync();}
+  }
 }
 function today(){ const d=new Date(); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
 function day(k){ const s=state(); s.days[k]=s.days[k]||{meals:[],bench:[]}; return s; }
@@ -797,6 +929,9 @@ function render(){
   // 허리둘레 차트
   renderWaist();
 
+  // 추이 그래프
+  renderGraph();
+
   // 내가 등록한 음식
   const cf=s.customFoods||[];
   customList.innerHTML = cf.length? cf.map((c,i)=>`<div class="meal"><span>${c.name} <span class="tag">${c.kcal}kcal·${c.prot}g</span></span><button class="x" onclick="delCustom(${i})">✕</button></div>`).join('') : '아직 없음 · 식단 탭에서 등록';
@@ -852,6 +987,99 @@ function renderWeek(){
   Object.entries(s.days).forEach(([k,v])=>{ const dt=new Date(k+'T00:00'); if(dt>=monday){
     (v.bench||[]).forEach(b=>bench+=b.w*b.r*b.s); if(v.run)run+=v.run.dist||0; pull+=v.pullups||0; }});
   wkBench.textContent=(bench/1000).toFixed(1); wkRun.textContent=run.toFixed(1); wkPull.textContent=pull;
+}
+
+/* ================= 추이 그래프 (기간·지표 선택) ================= */
+const METRICS = {
+  weight:  {label:'몸무게', unit:'kg', color:'#4ade80', dec:1, src:'day',  lower:true, get:v=>v.weight},
+  waist:   {label:'허리둘레', unit:'cm', color:'#38bdf8', dec:1, src:'week', lower:true, get:v=>v.waist},
+  bf:      {label:'체지방', unit:'%', color:'#a78bfa', dec:1, src:'week', lower:true, get:v=>v.bf},
+  kcal:    {label:'섭취칼로리', unit:'kcal', color:'#fbbf24', dec:0, src:'day', get:v=>(v.meals||[]).reduce((a,m)=>a+m.kcal,0)},
+  protein: {label:'단백질', unit:'g', color:'#f472b6', dec:0, src:'day', get:v=>(v.meals||[]).reduce((a,m)=>a+m.prot,0)},
+  pullups: {label:'턱걸이', unit:'개', color:'#fb923c', dec:0, src:'day', get:v=>v.pullups},
+  bench:   {label:'벤치볼륨', unit:'kg', color:'#f87171', dec:0, src:'day', get:v=>(v.bench||[]).reduce((a,b)=>a+b.w*b.r*b.s,0)},
+  run:     {label:'런닝', unit:'km', color:'#34d399', dec:1, src:'day', get:v=>v.run&&v.run.dist},
+  water:   {label:'물', unit:'L', color:'#60a5fa', dec:1, src:'day', get:v=>v.water},
+  sleep:   {label:'수면', unit:'h', color:'#c084fc', dec:1, src:'day', get:v=>v.sleep},
+};
+const METRIC_ORDER=['weight','waist','bf','kcal','protein','pullups','bench','run','water','sleep'];
+let graphMetric='weight', graphDays=30;
+function setGraphMetric(k){ graphMetric=k; renderGraph(); }
+function setGraphRange(n){ graphDays=n; renderGraph(); }
+function gfmt(v,dec){ return dec? Number(v).toFixed(dec) : String(Math.round(v)); }
+function graphSeries(key){
+  const m=METRICS[key], s=state(), out=[];
+  if(m.src==='week'){
+    Object.values(s.weekly||{}).forEach(v=>{ const val=m.get(v); if(v&&v.date&&typeof val==='number'&&val>0) out.push({date:v.date,val}); });
+  } else {
+    Object.entries(s.days||{}).forEach(([k,v])=>{ const val=m.get(v); if(typeof val==='number'&&val>0) out.push({date:k,val}); });
+  }
+  out.sort((a,b)=>a.date.localeCompare(b.date));
+  return out;
+}
+function renderGraph(){
+  if(typeof graphMetrics==='undefined'||!graphMetrics) return;
+  if(!graphMetrics.children.length){
+    graphMetrics.innerHTML=METRIC_ORDER.map(k=>`<span class="chip" data-m="${k}" onclick="setGraphMetric('${k}')">${METRICS[k].label}</span>`).join('');
+  }
+  graphMetrics.querySelectorAll('.chip').forEach(c=>c.classList.toggle('on',c.dataset.m===graphMetric));
+  document.querySelectorAll('#graphRange button').forEach(b=>b.classList.toggle('on',b.dataset.d===String(graphDays)));
+  const m=METRICS[graphMetric];
+  gTitle.textContent=`📈 ${m.label} 추이`;
+  let series=graphSeries(graphMetric);
+  if(graphDays!=='all'){
+    const startTs=new Date().setHours(0,0,0,0)-(Number(graphDays)-1)*86400000;
+    series=series.filter(p=>new Date(p.date+'T00:00').getTime()>=startTs);
+  }
+  if(!series.length){
+    gChart.parentElement.style.display='none'; gEmpty.style.display='block';
+    gStats.innerHTML=''; gHint.textContent='';
+    gEmpty.textContent=`이 기간에 ${m.label} 기록이 없어요`; return;
+  }
+  gChart.parentElement.style.display='block'; gEmpty.style.display='none';
+  const P={l:34,r:12,t:14,b:22}, W=320, H=200;
+  const ts=series.map(p=>new Date(p.date+'T00:00').getTime());
+  const tMin=Math.min(...ts), tMax=Math.max(...ts), tRng=(tMax-tMin)||1;
+  const vals=series.map(p=>p.val);
+  let lo=Math.min(...vals), hi=Math.max(...vals);
+  const goal=(graphMetric==='weight')?Number(state().profile.goal)||0:0;
+  if(goal){ lo=Math.min(lo,goal); hi=Math.max(hi,goal); }
+  const pad=(hi-lo)*0.12||Math.max(1,hi*0.08);
+  let vMin=lo-pad, vMax=hi+pad;
+  if(Math.min(...vals)>=0) vMin=Math.max(0,vMin);
+  const vRng=(vMax-vMin)||1;
+  const X=t=>series.length===1?(P.l+(W-P.r-P.l)/2):P.l+(t-tMin)/tRng*(W-P.r-P.l);
+  const Y=v=>P.t+(1-(v-vMin)/vRng)*(H-P.b-P.t);
+  const pts=series.map((p,i)=>`${X(ts[i]).toFixed(1)},${Y(p.val).toFixed(1)}`);
+  let svg='';
+  [vMax,(vMax+vMin)/2,vMin].forEach(gv=>{
+    const y=Y(gv).toFixed(1);
+    svg+=`<line x1="${P.l}" y1="${y}" x2="${W-P.r}" y2="${y}" stroke="var(--line)" stroke-width="0.6"/>`;
+    svg+=`<text x="${P.l-4}" y="${(+y+3).toFixed(1)}" text-anchor="end" font-size="9" fill="var(--sub)">${gfmt(gv,m.dec)}</text>`;
+  });
+  if(goal){
+    const gy=Y(goal).toFixed(1);
+    svg+=`<line x1="${P.l}" y1="${gy}" x2="${W-P.r}" y2="${gy}" stroke="var(--acc)" stroke-width="1" stroke-dasharray="4 3" opacity="0.85"/>`;
+    svg+=`<text x="${W-P.r}" y="${(+gy-3).toFixed(1)}" text-anchor="end" font-size="8.5" fill="var(--acc)">목표 ${gfmt(goal,m.dec)}</text>`;
+  }
+  if(series.length>1){
+    const area=`M${X(ts[0]).toFixed(1)},${(H-P.b).toFixed(1)} L`+pts.join(' L')+` L${X(ts[ts.length-1]).toFixed(1)},${(H-P.b).toFixed(1)} Z`;
+    svg+=`<path d="${area}" fill="${m.color}" opacity="0.12"/>`;
+    svg+=`<polyline points="${pts.join(' ')}" fill="none" stroke="${m.color}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>`;
+  }
+  const r=series.length>30?1.5:2.4;
+  series.forEach((p,i)=>{ svg+=`<circle cx="${X(ts[i]).toFixed(1)}" cy="${Y(p.val).toFixed(1)}" r="${r}" fill="${m.color}"/>`; });
+  const fmtd=d=>{const dt=new Date(d+'T00:00');return (dt.getMonth()+1)+'/'+dt.getDate();};
+  svg+=`<text x="${P.l}" y="${H-6}" font-size="9" fill="var(--sub)">${fmtd(series[0].date)}</text>`;
+  if(series.length>1) svg+=`<text x="${W-P.r}" y="${H-6}" text-anchor="end" font-size="9" fill="var(--sub)">${fmtd(series[series.length-1].date)}</text>`;
+  gChart.innerHTML=svg;
+  const first=vals[0], last=vals[vals.length-1], avg=vals.reduce((a,b)=>a+b,0)/vals.length, change=last-first;
+  const chCls=m.lower?(change<0?'good':change>0?'warnc':''):'';
+  gStats.innerHTML=`
+    <div class="stat"><div class="v">${gfmt(last,m.dec)}<span class="u">${m.unit}</span></div><div class="l">현재</div></div>
+    <div class="stat"><div class="v">${gfmt(avg,m.dec)}<span class="u">${m.unit}</span></div><div class="l">평균</div></div>
+    <div class="stat"><div class="v ${chCls}">${change>0?'+':''}${gfmt(change,m.dec)}</div><div class="l">기간 변화</div></div>`;
+  gHint.innerHTML=`기록 ${series.length}개 · 최고 ${gfmt(Math.max(...vals),m.dec)}${m.unit} · 최저 ${gfmt(Math.min(...vals),m.dec)}${m.unit}`;
 }
 
 /* ================= 오늘의 목표 체크리스트 + 달성 알림 ================= */
@@ -1146,6 +1374,116 @@ function delPhoto(idx){
 function setTheme(t){ document.documentElement.setAttribute('data-theme',t); localStorage.setItem('theme',t); }
 
 /* ================= 백업 ================= */
+function shareSnapshot(){
+  const copy=JSON.parse(JSON.stringify(state()));
+  // 사진은 URL 용량을 크게 초과할 수 있어 공유 링크에서는 제외한다.
+  Object.values(copy.weekly||{}).forEach(w=>delete w.photos);
+  return {v:1,createdAt:new Date().toISOString(),data:copy};
+}
+function bytesToBase64Url(bytes){
+  let bin='';
+  for(let i=0;i<bytes.length;i+=8192) bin+=String.fromCharCode(...bytes.subarray(i,i+8192));
+  return btoa(bin).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+}
+function base64UrlToBytes(s){
+  s=s.replace(/-/g,'+').replace(/_/g,'/');
+  while(s.length%4)s+='=';
+  const bin=atob(s), out=new Uint8Array(bin.length);
+  for(let i=0;i<bin.length;i++)out[i]=bin.charCodeAt(i);
+  return out;
+}
+async function encodeShare(obj){
+  const raw=new TextEncoder().encode(JSON.stringify(obj));
+  if(typeof CompressionStream!=='undefined'){
+    const stream=new Blob([raw]).stream().pipeThrough(new CompressionStream('gzip'));
+    return 'g'+bytesToBase64Url(new Uint8Array(await new Response(stream).arrayBuffer()));
+  }
+  return 'r'+bytesToBase64Url(raw);
+}
+async function decodeShare(encoded){
+  const mode=encoded[0], bytes=base64UrlToBytes(encoded.slice(1));
+  let raw=bytes;
+  if(mode==='g'){
+    if(typeof DecompressionStream==='undefined') throw new Error('이 브라우저는 압축 링크를 지원하지 않아요.');
+    const stream=new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'));
+    raw=new Uint8Array(await new Response(stream).arrayBuffer());
+  } else if(mode!=='r') throw new Error('지원하지 않는 공유 링크예요.');
+  return JSON.parse(new TextDecoder().decode(raw));
+}
+function copyText(text){
+  if(navigator.clipboard&&window.isSecureContext) return navigator.clipboard.writeText(text);
+  const ta=document.createElement('textarea'); ta.value=text; ta.style.position='fixed'; ta.style.opacity='0';
+  document.body.appendChild(ta); ta.select(); const ok=document.execCommand('copy'); ta.remove();
+  return ok?Promise.resolve():Promise.reject(new Error('copy failed'));
+}
+async function shareData(){
+  try{
+    const encoded=await encodeShare(shareSnapshot());
+    const base=location.origin&&location.origin!=='null' ? location.origin+location.pathname : location.href.split('#')[0];
+    const url=base+'#share='+encoded;
+    if(url.length>100000){ toast('기록이 너무 커요 — 백업 파일을 이용해주세요'); return; }
+    if(navigator.share){
+      try{ await navigator.share({title:'ABS90 기록',text:'ABS90 식단·운동 기록 보기',url}); return; }
+      catch(e){ if(e.name==='AbortError')return; }
+    }
+    await copyText(url); toast('공유 링크가 복사됐어요 🔗');
+  }catch(e){ toast('공유 링크 생성 실패'); }
+}
+async function migrateToCloud(){
+  try{
+    if(location.hostname==='fit.get1004.com'){ toast('이미 계정 동기화 주소예요'); return; }
+    const encoded=await encodeShare(shareSnapshot());
+    const url='https://fit.get1004.com/#import='+encoded;
+    if(url.length>100000){ toast('기록이 너무 커요 · 백업 파일을 이용해주세요'); return; }
+    location.href=url;
+  }catch(e){ toast('기록 이동 링크 생성 실패'); }
+}
+function esc(v){ return String(v??'').replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c])); }
+let pendingImportPack=null;
+function openSharedPreview(pack,importMode=false){
+  if(!pack||pack.v!==1||!pack.data||typeof pack.data.days!=='object') throw new Error('올바르지 않은 기록 링크예요.');
+  const s=pack.data, keys=Object.keys(s.days||{}).sort().reverse();
+  const p=s.profile||{}, created=pack.createdAt?new Date(pack.createdAt).toLocaleString('ko-KR'):'';
+  let totalPull=0,totalRun=0; keys.forEach(k=>{const d=s.days[k]||{};totalPull+=d.pullups||0;if(d.run)totalRun+=d.run.dist||0;});
+  let h=`<div class="hint">🔒 읽기 전용 공유 기록 · 생성 ${esc(created)}<br>이 링크를 받은 사람은 아래 기록을 볼 수 있습니다. 바디 사진은 포함되지 않았습니다.</div>
+    <div class="grid3" style="margin-top:12px">
+      <div class="stat"><div class="v">${keys.length}</div><div class="l">기록 일수</div></div>
+      <div class="stat"><div class="v">${totalPull}</div><div class="l">턱걸이</div></div>
+      <div class="stat"><div class="v">${totalRun.toFixed(1)}</div><div class="l">런닝 km</div></div>
+    </div>`;
+  if(p.h||p.w||p.goal) h+=`<div class="hint" style="margin-top:10px">프로필 · 키 ${esc(p.h||'-')}cm · 설정 체중 ${esc(p.w||'-')}kg · 목표 ${esc(p.goal||'-')}kg</div>`;
+  h+='<div class="sep"></div>';
+  h+=keys.length?keys.map(k=>{
+    const d=s.days[k]||{}, meals=d.meals||[], kcal=meals.reduce((a,m)=>a+(Number(m.kcal)||0),0), prot=meals.reduce((a,m)=>a+(Number(m.prot)||0),0);
+    let details=[];
+    if(d.weight)details.push(`체중 ${esc(d.weight)}kg`); if(d.water)details.push(`물 ${esc(d.water)}L`); if(d.sleep)details.push(`수면 ${esc(d.sleep)}h`);
+    if(d.pullups)details.push(`턱걸이 ${esc(d.pullups)}개`); if(d.run)details.push(`런닝 ${esc(d.run.dist||0)}km`);
+    if(d.bench&&d.bench.length)details.push('벤치 '+d.bench.map(b=>`${esc(b.w)}kg×${esc(b.r)}×${esc(b.s)}`).join(', '));
+    const food=meals.length?`<div class="hint">🍽️ ${meals.map(m=>esc(m.name)).join(' · ')}</div>`:'';
+    return `<div class="meal" style="display:block"><b>${esc(k)}</b><span class="tag" style="float:right">${kcal}kcal · ${prot}g</span><div class="hint" style="margin-top:5px">${details.join(' · ')||'식단 기록'}</div>${food}</div>`;
+  }).join(''):'<div class="hint">공유된 기록이 없습니다.</div>';
+  if(importMode){
+    pendingImportPack=pack;
+    h+=`<button style="width:100%;margin-top:14px" onclick="saveSharedToAccount()">☁️ 이 기록을 내 계정에 저장</button>`;
+  }
+  mTitle.textContent=importMode?'☁️ 기존 기록 가져오기':'🔗 공유된 ABS90 기록'; mBody.innerHTML=h; dayModal.classList.add('on');
+}
+async function saveSharedToAccount(){
+  if(!pendingImportPack||!pendingImportPack.data)return;
+  const incoming=cleanForSync(pendingImportPack.data);
+  const merged=mergeThreeWay({},cleanForSync(state()),incoming);
+  DB.set(merged); render(); pendingImportPack=null;
+  history.replaceState(null,'',location.pathname+location.search);
+  dayModal.classList.remove('on');
+  if(!syncReady) await initSync();
+  await pushSync();
+  toast('기존 기록을 계정에 저장했어요 ☁️');
+}
+async function loadSharedLink(){
+  const m=location.hash.match(/^#(share|import)=(.+)$/); if(!m)return;
+  try{ openSharedPreview(await decodeShare(m[2]),m[1]==='import'); }
+  catch(e){ mTitle.textContent='공유 링크 오류'; mBody.innerHTML=`<div class="hint badc">${esc(e.message||'기록을 열 수 없습니다.')}</div>`; dayModal.classList.add('on'); }
+}
 function exportData(){
   const blob=new Blob([JSON.stringify(state(),null,2)],{type:'application/json'});
   const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='abs90-backup-'+today()+'.json'; a.click();
@@ -1188,5 +1526,11 @@ setTheme(localStorage.getItem('theme')||'dark');
 setSlot(autoSlot());
 render();
 booted=true; // 이후부터 목표달성 축하 활성화
-if('serviceWorker' in navigator){ navigator.serviceWorker.register('sw.js').catch(()=>{}); }
+loadSharedLink();
+initSync();
+window.addEventListener('online',initSync);
+document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')initSync();});
+if('serviceWorker' in navigator){
+  navigator.serviceWorker.register('sw.js',{updateViaCache:'none'}).then(reg=>reg.update()).catch(()=>{});
+}
 </script>
