@@ -1150,7 +1150,8 @@ function calcStreak(){
 }
 function renderWeight(){
   const s=state();
-  const arr=Object.entries(s.days).filter(([k,v])=>v.weight).sort().map(([k,v])=>({k,w:v.weight}));
+  const baseline=s.profile.bodyBaselineDate||'';
+  const arr=Object.entries(s.days).filter(([k,v])=>v.weight&&(!baseline||k>=baseline)).sort().map(([k,v])=>({k,w:v.weight}));
   if(!arr.length){ wAvg.textContent='--'; wDelta.textContent='--'; spark.innerHTML=''; goalMsg.textContent='체중을 기록하면 추세가 보여요'; return; }
   // 7일 이동평균
   const avgArr=arr.map((_,i)=>{ const sl=arr.slice(Math.max(0,i-6),i+1); return sl.reduce((a,b)=>a+b.w,0)/sl.length; });
@@ -1217,7 +1218,8 @@ function graphSeries(key){
   } else if(m.src==='week'){
     Object.values(s.weekly||{}).forEach(v=>{ const val=m.get(v); if(v&&v.date&&typeof val==='number'&&val>0) out.push({date:v.date,val}); });
   } else {
-    Object.entries(s.days||{}).forEach(([k,v])=>{ const val=m.get(v); if(typeof val==='number'&&val>0) out.push({date:k,val}); });
+    const baseline=key==='weight'?(s.profile.bodyBaselineDate||''):'';
+    Object.entries(s.days||{}).forEach(([k,v])=>{ const val=m.get(v); if((!baseline||k>=baseline)&&typeof val==='number'&&val>0) out.push({date:k,val}); });
   }
   out.sort((a,b)=>a.date.localeCompare(b.date));
   return out;
