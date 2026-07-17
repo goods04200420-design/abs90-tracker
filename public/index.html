@@ -134,6 +134,14 @@ button.mini{padding:8px 12px;font-size:13px}
 .chip.on{background:var(--acc);color:#07130b;border-color:var(--acc)}
 .chip.on small{color:#07130b}
 .gempty{color:var(--sub);font-size:13px;text-align:center;padding:48px 0}
+.pdfdrop{border:1px dashed var(--acc2);border-radius:14px;padding:14px;background:color-mix(in srgb,var(--acc2) 7%,var(--card2))}
+.pdfstatus{margin-top:10px;line-height:1.6}
+.ocrgrid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:12px}
+.ocrgrid .wide{grid-column:1/-1}
+.bodylog{padding:11px 0;border-bottom:1px solid var(--line)}
+.bodylog:last-child{border-bottom:0}
+.bodylog .top{display:flex;justify-content:space-between;gap:8px;align-items:center}
+.bodylog .vals{font-size:12px;color:var(--sub);line-height:1.7;margin-top:5px}
 </style>
 
 <div class="hdr">
@@ -387,6 +395,35 @@ button.mini{padding:8px 12px;font-size:13px}
 <div class="tab" id="tab-week">
  <div class="wrap">
   <div class="card">
+    <h3>📄 체성분 PDF 자동 기록</h3>
+    <div class="pdfdrop">
+      <input id="bodyPdfInput" type="file" accept=".pdf,application/pdf" style="display:none" onchange="readBodyPdf(event)">
+      <button style="width:100%" onclick="document.getElementById('bodyPdfInput').click()">보고서1 PDF 불러오기</button>
+      <div id="pdfStatus" class="hint pdfstatus">폰의 카카오톡·다운로드 폴더에서 PDF를 선택하세요. 인식 후 저장 전에 숫자를 확인할 수 있습니다.</div>
+    </div>
+    <div id="pdfPreview" style="display:none">
+      <div class="ocrgrid">
+        <div><label>측정 날짜</label><input id="bcDate" type="date"></div>
+        <div><label>측정 시간</label><input id="bcTime" type="time"></div>
+        <div><label>체중 (kg)</label><input id="bcWeight" type="number" inputmode="decimal" step="0.01"></div>
+        <div><label>BMI</label><input id="bcBmi" type="number" inputmode="decimal" step="0.1"></div>
+        <div><label>체지방률 (%)</label><input id="bcBodyFatPct" type="number" inputmode="decimal" step="0.1"></div>
+        <div><label>체지방량 (kg)</label><input id="bcBodyFatMass" type="number" inputmode="decimal" step="0.01"></div>
+        <div><label>골격근량 (kg)</label><input id="bcSkeletalMuscle" type="number" inputmode="decimal" step="0.01"></div>
+        <div><label>체수분률 (%)</label><input id="bcBodyWaterPct" type="number" inputmode="decimal" step="0.1"></div>
+        <div><label>내장지방 레벨</label><input id="bcVisceralFat" type="number" inputmode="decimal" step="1"></div>
+        <div><label>기초대사량 (kcal)</label><input id="bcBmr" type="number" inputmode="numeric" step="1"></div>
+        <div><label>SMI</label><input id="bcSmi" type="number" inputmode="decimal" step="0.1"></div>
+        <div><label>허리·엉덩이 비율</label><input id="bcWhr" type="number" inputmode="decimal" step="0.01"></div>
+        <div><label>피하지방률 (%)</label><input id="bcSubcutaneousPct" type="number" inputmode="decimal" step="0.1"></div>
+        <div><label>신체 나이</label><input id="bcBodyAge" type="number" inputmode="numeric" step="1"></div>
+      </div>
+      <div class="hint warnc" style="margin-top:10px">저장 전 숫자가 PDF와 같은지 확인하세요. 빈 항목은 직접 입력하거나 그대로 두어도 됩니다.</div>
+      <button style="width:100%;margin-top:10px" onclick="saveBodyComposition()">확인한 체성분 저장</button>
+    </div>
+  </div>
+
+  <div class="card">
     <h3>📅 주간 측정 (주 1회 · 같은 요일 아침 공복)</h3>
     <div class="grid2">
       <div><label>허리둘레 (cm · 배꼽 기준)</label><input id="inWaist" type="number" inputmode="decimal" step="0.5" placeholder="82"></div>
@@ -409,6 +446,10 @@ button.mini{padding:8px 12px;font-size:13px}
     <h3>📏 허리둘레 추이</h3>
     <svg class="spark" id="waistSpark" viewBox="0 0 300 60" preserveAspectRatio="none" style="height:70px"></svg>
     <div id="waistLog" class="hint" style="margin-top:6px"></div>
+  </div>
+  <div class="card">
+    <h3>🧬 체성분 측정 기록</h3>
+    <div id="bodyCompositionLog" class="hint">저장된 체성분 기록이 없습니다.</div>
   </div>
  </div>
 </div>
@@ -612,13 +653,14 @@ function state(){
   s.profile = s.profile||{};
   s.days = s.days||{};
   s.weekly = s.weekly||{};
+  s.bodyCompositions = s.bodyCompositions||[];
   return s;
 }
 function clone(v){ return v===undefined?undefined:JSON.parse(JSON.stringify(v)); }
 function same(a,b){ return JSON.stringify(a)===JSON.stringify(b); }
 function plain(v){ return v&&typeof v==='object'&&!Array.isArray(v); }
 function cleanForSync(source){
-  const out=clone(source||{}); out.profile=out.profile||{}; out.days=out.days||{}; out.weekly=out.weekly||{};
+  const out=clone(source||{}); out.profile=out.profile||{}; out.days=out.days||{}; out.weekly=out.weekly||{}; out.bodyCompositions=out.bodyCompositions||[];
   Object.values(out.weekly).forEach(w=>delete w.photos);
   return out;
 }
@@ -628,6 +670,15 @@ function withLocalPhotos(source,local){
     if(v.photos&&v.photos.length){ out.weekly[wk]=out.weekly[wk]||{}; out.weekly[wk].photos=clone(v.photos); }
   });
   return out;
+}
+function migrateBodyBaseline(source){
+  const s=source||{}, records=(s.bodyCompositions||[]).filter(v=>v&&v.date&&Number(v.weight)>0).slice().sort((a,b)=>(a.id||a.date).localeCompare(b.id||b.date));
+  s.profile=s.profile||{};
+  if(!records.length||s.profile.bodyBaselineDate)return false;
+  const first=records[0], latest=records[records.length-1];
+  s.profile.startW=Number(first.weight); s.profile.startDate=first.date;
+  s.profile.w=Number(latest.weight); s.profile.bodyBaselineDate=first.date;
+  return true;
 }
 // 마지막 동기화본을 기준으로 PC/폰 양쪽 변경을 재귀 병합한다. 배열이 동시에 바뀐 경우 현재 기기 입력을 우선한다.
 function mergeThreeWay(base,local,remote){
@@ -671,7 +722,7 @@ async function initSync(){
     syncVersion=Number(data.version||0);
     if(data.state){
       const remote=cleanForSync(data.state), base=meta.base||{};
-      const merged=changedUser?remote:mergeThreeWay(base,deviceState,remote);
+      const merged=changedUser?remote:mergeThreeWay(base,deviceState,remote); migrateBodyBaseline(merged);
       syncBase=remote; syncApplying=true; DB.set(changedUser?merged:withLocalPhotos(merged,localState)); syncApplying=false;
       saveSyncMeta(); render(); syncReady=true;
       if(!same(merged,remote))scheduleSync(); else setSyncStatus('동기화 완료',data.email);
@@ -773,6 +824,154 @@ function saveWeekly(){
   if(!isNaN(bf)) s.weekly[wk].bf=bf;
   s.weekly[wk].date=today();
   DB.set(s); render(); toast('주간 측정 저장');
+}
+
+/* ================= 체성분 PDF ================= */
+const BODY_PDF_LIBS={
+  pdf:'https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.min.mjs',
+  worker:'https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.worker.min.mjs',
+  ocr:'https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js'
+};
+let pendingBodyPdfName='';
+function loadExternalScript(src){
+  return new Promise((resolve,reject)=>{
+    if([...document.scripts].some(s=>s.src===src))return resolve();
+    const s=document.createElement('script'); s.src=src; s.onload=resolve; s.onerror=reject; document.head.appendChild(s);
+  });
+}
+function setPdfStatus(text,kind=''){
+  pdfStatus.textContent=text;
+  pdfStatus.className='hint pdfstatus '+(kind==='bad'?'badc':kind==='good'?'good':'');
+}
+function bodyInput(id,value){
+  const el=document.getElementById(id);
+  el.value=(value===null||value===undefined||Number.isNaN(value))?'':value;
+}
+function plausible(value,min,max){
+  const cleaned=String(value??'').replace(/[^0-9.]/g,'');
+  if(!cleaned||cleaned.endsWith('.')||(cleaned.match(/\./g)||[]).length>1)return null;
+  const n=Number(cleaned);
+  return Number.isFinite(n)&&n>=min&&n<=max?n:null;
+}
+async function renderPdfPage(pdf,pageNumber,scale=2){
+  const page=await pdf.getPage(pageNumber), viewport=page.getViewport({scale});
+  const canvas=document.createElement('canvas'); canvas.width=Math.ceil(viewport.width); canvas.height=Math.ceil(viewport.height);
+  await page.render({canvasContext:canvas.getContext('2d',{willReadFrequently:true}),viewport}).promise;
+  return canvas;
+}
+async function recognizeCrop(worker,canvas,rect,min,max){
+  const crop=document.createElement('canvas');
+  const x=Math.round(canvas.width*rect[0]), y=Math.round(canvas.height*rect[1]);
+  const w=Math.round(canvas.width*rect[2]), h=Math.round(canvas.height*rect[3]);
+  crop.width=Math.max(160,w*3); crop.height=Math.max(60,h*3);
+  const ctx=crop.getContext('2d',{willReadFrequently:true});
+  ctx.fillStyle='#fff'; ctx.fillRect(0,0,crop.width,crop.height);
+  ctx.imageSmoothingEnabled=true; ctx.drawImage(canvas,x,y,w,h,0,0,crop.width,crop.height);
+  const pixels=ctx.getImageData(0,0,crop.width,crop.height);
+  for(let i=0;i<pixels.data.length;i+=4){
+    const gray=.299*pixels.data[i]+.587*pixels.data[i+1]+.114*pixels.data[i+2];
+    const level=gray<110?0:255;
+    pixels.data[i]=pixels.data[i+1]=pixels.data[i+2]=level; pixels.data[i+3]=255;
+  }
+  ctx.putImageData(pixels,0,0);
+  const {data}=await worker.recognize(crop);
+  return plausible(data.text,min,max);
+}
+function dateFromPdfName(name,lastModified){
+  const m=String(name).match(/(20\d{2})(\d{2})(\d{2})(\d{2})(\d{2})/);
+  if(m)return {date:`${m[1]}-${m[2]}-${m[3]}`,time:`${m[4]}:${m[5]}`};
+  const d=new Date(lastModified||Date.now());
+  return {date:dkeyOf(d),time:String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0')};
+}
+async function readBodyPdf(event){
+  const file=event.target.files&&event.target.files[0]; event.target.value='';
+  if(!file)return;
+  if(file.type!=='application/pdf'&&!file.name.toLowerCase().endsWith('.pdf')){ toast('PDF 파일을 선택해주세요'); return; }
+  pendingBodyPdfName=file.name;
+  const dt=dateFromPdfName(file.name,file.lastModified);
+  bodyInput('bcDate',dt.date); bodyInput('bcTime',dt.time);
+  pdfPreview.style.display='none'; setPdfStatus('PDF 준비 중…');
+  try{
+    const pdfjs=await import(BODY_PDF_LIBS.pdf); pdfjs.GlobalWorkerOptions.workerSrc=BODY_PDF_LIBS.worker;
+    await loadExternalScript(BODY_PDF_LIBS.ocr);
+    const pdf=await pdfjs.getDocument({data:await file.arrayBuffer()}).promise;
+    if(pdf.numPages!==3)throw new Error('보고서1 형식(3페이지)이 아닙니다');
+    const pages=[];
+    for(let i=1;i<=3;i++){ setPdfStatus(`PDF 페이지 준비 중… ${i}/3`); pages.push(await renderPdfPage(pdf,i,1.65)); }
+    const worker=await Tesseract.createWorker('eng',1,{logger:m=>{
+      if(m.status==='recognizing text')setPdfStatus(`숫자 인식 중… ${Math.round((m.progress||0)*100)}%`);
+    }});
+    await worker.setParameters({tessedit_char_whitelist:'0123456789.',tessedit_pageseg_mode:'7'});
+    const specs=[
+      ['bcWeight',0,[.50,.390,.11,.030],40,200],
+      ['bcBodyFatMass',0,[.50,.438,.11,.030],2,80],
+      ['bcSkeletalMuscle',0,[.50,.462,.11,.040],10,80],
+      ['bcBmi',0,[.50,.558,.11,.030],10,60],
+      ['bcBodyFatPct',0,[.50,.600,.11,.030],2,60],
+      ['bcVisceralFat',0,[.44,.642,.12,.030],1,30],
+      ['bcSubcutaneousPct',1,[.27,.263,.11,.030],2,60],
+      ['bcBmr',1,[.27,.300,.11,.026],800,3500],
+      ['bcBodyAge',1,[.27,.336,.11,.026],10,100],
+      ['bcBodyWaterPct',2,[.74,.483,.10,.030],30,80],
+      ['bcSmi',2,[.74,.513,.10,.030],3,20],
+      ['bcWhr',2,[.74,.542,.10,.030],.5,1.5],
+    ];
+    for(let i=0;i<specs.length;i++){
+      const [id,p,rect,min,max]=specs[i];
+      setPdfStatus(`숫자 인식 중… ${i+1}/${specs.length}`);
+      bodyInput(id,await recognizeCrop(worker,pages[p],rect,min,max));
+    }
+    await worker.terminate();
+    const weight=Number(bcWeight.value), bf=Number(bcBodyFatPct.value), height=Number(state().profile.h||170);
+    if(weight>0&&height>0)bodyInput('bcBmi',Math.round(weight/((height/100)**2)*10)/10);
+    if(weight>0&&bf>0)bodyInput('bcBodyFatMass',Math.round(weight*bf)/100);
+    pdfPreview.style.display='block';
+    setPdfStatus('인식 완료 · 아래 숫자를 PDF와 비교한 뒤 저장하세요','good');
+    pdfPreview.scrollIntoView({behavior:'smooth',block:'start'});
+  }catch(e){
+    console.error(e); setPdfStatus((e.message||'PDF 인식 실패')+' · 보고서1 PDF인지 확인해주세요','bad');
+  }
+}
+function numInput(id){
+  const n=parseFloat(document.getElementById(id).value); return Number.isFinite(n)?n:null;
+}
+function weekKeyOf(date){
+  const d=new Date(date+'T00:00'), on=new Date(d.getFullYear(),0,1);
+  const wk=Math.ceil((((d-on)/86400000)+on.getDay()+1)/7); return d.getFullYear()+'-W'+wk;
+}
+function saveBodyComposition(){
+  const date=bcDate.value, time=bcTime.value||'00:00', weight=numInput('bcWeight');
+  if(!date||weight===null){ toast('측정 날짜와 체중을 확인해주세요'); return; }
+  const record={
+    id:`${date}T${time}`,date,time,source:'feelfit-pdf',fileName:pendingBodyPdfName,
+    weight,bmi:numInput('bcBmi'),bodyFatPct:numInput('bcBodyFatPct'),bodyFatMass:numInput('bcBodyFatMass'),
+    skeletalMuscle:numInput('bcSkeletalMuscle'),bodyWaterPct:numInput('bcBodyWaterPct'),
+    visceralFat:numInput('bcVisceralFat'),bmr:numInput('bcBmr'),smi:numInput('bcSmi'),
+    whr:numInput('bcWhr'),subcutaneousPct:numInput('bcSubcutaneousPct'),bodyAge:numInput('bcBodyAge')
+  };
+  const s=state(), idx=s.bodyCompositions.findIndex(v=>v.id===record.id);
+  if(idx>=0)s.bodyCompositions[idx]=record; else s.bodyCompositions.push(record);
+  s.bodyCompositions.sort((a,b)=>a.id.localeCompare(b.id));
+  s.days[date]=s.days[date]||{meals:[],bench:[]}; s.days[date].weight=weight;
+  const wk=weekKeyOf(date); s.weekly[wk]=s.weekly[wk]||{}; s.weekly[wk].date=date;
+  if(record.bodyFatPct!==null)s.weekly[wk].bf=record.bodyFatPct;
+  s.profile.w=weight;
+  if(!s.profile.bodyBaselineDate){s.profile.startW=weight;s.profile.startDate=date;s.profile.bodyBaselineDate=date;}
+  DB.set(s); pdfPreview.style.display='none'; render(); toast('체성분과 체중을 저장했어요 ☁️');
+}
+function delBodyComposition(id){
+  if(!confirm('이 체성분 기록을 삭제할까요?'))return;
+  const s=state(); s.bodyCompositions=(s.bodyCompositions||[]).filter(v=>v.id!==id);
+  DB.set(s); render();
+}
+function renderBodyCompositions(){
+  if(typeof bodyCompositionLog==='undefined'||!bodyCompositionLog)return;
+  const arr=(state().bodyCompositions||[]).slice().sort((a,b)=>b.id.localeCompare(a.id));
+  bodyCompositionLog.innerHTML=arr.length?arr.map(v=>`<div class="bodylog">
+    <div class="top"><b>${esc(v.date)} ${esc(v.time||'')}</b><button class="ghost mini" onclick="delBodyComposition('${esc(v.id)}')">삭제</button></div>
+    <div class="vals">체중 ${esc(v.weight)}kg${Number.isFinite(v.bodyFatPct)?` · 체지방 ${esc(v.bodyFatPct)}%`:''}${Number.isFinite(v.skeletalMuscle)?` · 골격근 ${esc(v.skeletalMuscle)}kg`:''}<br>
+    ${Number.isFinite(v.bodyFatMass)?`지방량 ${esc(v.bodyFatMass)}kg · `:''}${Number.isFinite(v.visceralFat)?`내장지방 ${esc(v.visceralFat)} · `:''}${Number.isFinite(v.bodyWaterPct)?`체수분 ${esc(v.bodyWaterPct)}%`:''}</div>
+  </div>`).join(''):'저장된 체성분 기록이 없습니다.';
 }
 function saveProfile(){
   const s=state();
@@ -928,6 +1127,7 @@ function render(){
 
   // 허리둘레 차트
   renderWaist();
+  renderBodyCompositions();
 
   // 추이 그래프
   renderGraph();
@@ -994,6 +1194,9 @@ const METRICS = {
   weight:  {label:'몸무게', unit:'kg', color:'#4ade80', dec:1, src:'day',  lower:true, get:v=>v.weight},
   waist:   {label:'허리둘레', unit:'cm', color:'#38bdf8', dec:1, src:'week', lower:true, get:v=>v.waist},
   bf:      {label:'체지방', unit:'%', color:'#a78bfa', dec:1, src:'week', lower:true, get:v=>v.bf},
+  muscle:  {label:'골격근량', unit:'kg', color:'#2dd4bf', dec:1, src:'body', get:v=>v.skeletalMuscle},
+  fatmass: {label:'체지방량', unit:'kg', color:'#e879f9', dec:1, src:'body', lower:true, get:v=>v.bodyFatMass},
+  visceral:{label:'내장지방', unit:'Lv', color:'#f97316', dec:0, src:'body', lower:true, get:v=>v.visceralFat},
   kcal:    {label:'섭취칼로리', unit:'kcal', color:'#fbbf24', dec:0, src:'day', get:v=>(v.meals||[]).reduce((a,m)=>a+m.kcal,0)},
   protein: {label:'단백질', unit:'g', color:'#f472b6', dec:0, src:'day', get:v=>(v.meals||[]).reduce((a,m)=>a+m.prot,0)},
   pullups: {label:'턱걸이', unit:'개', color:'#fb923c', dec:0, src:'day', get:v=>v.pullups},
@@ -1002,14 +1205,16 @@ const METRICS = {
   water:   {label:'물', unit:'L', color:'#60a5fa', dec:1, src:'day', get:v=>v.water},
   sleep:   {label:'수면', unit:'h', color:'#c084fc', dec:1, src:'day', get:v=>v.sleep},
 };
-const METRIC_ORDER=['weight','waist','bf','kcal','protein','pullups','bench','run','water','sleep'];
+const METRIC_ORDER=['weight','waist','bf','muscle','fatmass','visceral','kcal','protein','pullups','bench','run','water','sleep'];
 let graphMetric='weight', graphDays=30;
 function setGraphMetric(k){ graphMetric=k; renderGraph(); }
 function setGraphRange(n){ graphDays=n; renderGraph(); }
 function gfmt(v,dec){ return dec? Number(v).toFixed(dec) : String(Math.round(v)); }
 function graphSeries(key){
   const m=METRICS[key], s=state(), out=[];
-  if(m.src==='week'){
+  if(m.src==='body'){
+    (s.bodyCompositions||[]).forEach(v=>{ const val=m.get(v); if(v&&v.date&&typeof val==='number'&&val>0)out.push({date:v.date,val}); });
+  } else if(m.src==='week'){
     Object.values(s.weekly||{}).forEach(v=>{ const val=m.get(v); if(v&&v.date&&typeof val==='number'&&val>0) out.push({date:v.date,val}); });
   } else {
     Object.entries(s.days||{}).forEach(([k,v])=>{ const val=m.get(v); if(typeof val==='number'&&val>0) out.push({date:k,val}); });
