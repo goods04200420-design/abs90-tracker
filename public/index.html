@@ -398,8 +398,8 @@ button.mini{padding:8px 12px;font-size:13px}
     <h3>📄 체성분 PDF 자동 기록</h3>
     <div class="pdfdrop">
       <input id="bodyPdfInput" type="file" accept=".pdf,application/pdf" style="display:none" onchange="readBodyPdf(event)">
-      <button style="width:100%" onclick="document.getElementById('bodyPdfInput').click()">보고서1 PDF 불러오기</button>
-      <div id="pdfStatus" class="hint pdfstatus">폰의 카카오톡·다운로드 폴더에서 PDF를 선택하세요. 인식 후 저장 전에 숫자를 확인할 수 있습니다.</div>
+      <button style="width:100%" onclick="document.getElementById('bodyPdfInput').click()">FeelFit PDF 불러오기</button>
+      <div id="pdfStatus" class="hint pdfstatus">2페이지·3페이지 FeelFit 보고서를 모두 지원합니다. 인식 후 저장 전에 숫자를 확인할 수 있습니다.</div>
     </div>
     <div id="pdfPreview" style="display:none">
       <div class="ocrgrid">
@@ -832,7 +832,7 @@ const BODY_PDF_LIBS={
   worker:'https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.worker.min.mjs',
   ocr:'https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js'
 };
-let pendingBodyPdfName='';
+let pendingBodyPdfName='', pendingBodyPdfPages=0;
 function loadExternalScript(src){
   return new Promise((resolve,reject)=>{
     if([...document.scripts].some(s=>s.src===src))return resolve();
@@ -851,7 +851,16 @@ function plausible(value,min,max){
   const cleaned=String(value??'').replace(/[^0-9.]/g,'');
   if(!cleaned||cleaned.endsWith('.')||(cleaned.match(/\./g)||[]).length>1)return null;
   const n=Number(cleaned);
-  return Number.isFinite(n)&&n>=min&&n<=max?n:null;
+  if(!Number.isFinite(n))return null;
+  if(n>=min&&n<=max)return n;
+  // 작은 소수점이 OCR에서 빠지는 경우(70.7→707, 8.7→87)를 복구한다.
+  if(!cleaned.includes('.')){
+    for(const divisor of [10,100]){
+      const shifted=n/divisor;
+      if(shifted>=min&&shifted<=max)return shifted;
+    }
+  }
+  return null;
 }
 async function renderPdfPage(pdf,pageNumber,scale=2){
   const page=await pdf.getPage(pageNumber), viewport=page.getViewport({scale});
@@ -888,6 +897,7 @@ async function readBodyPdf(event){
   if(!file)return;
   if(file.type!=='application/pdf'&&!file.name.toLowerCase().endsWith('.pdf')){ toast('PDF 파일을 선택해주세요'); return; }
   pendingBodyPdfName=file.name;
+  pendingBodyPdfPages=0;
   const dt=dateFromPdfName(file.name,file.lastModified);
   bodyInput('bcDate',dt.date); bodyInput('bcTime',dt.time);
   pdfPreview.style.display='none'; setPdfStatus('PDF 준비 중…');
@@ -895,14 +905,28 @@ async function readBodyPdf(event){
     const pdfjs=await import(BODY_PDF_LIBS.pdf); pdfjs.GlobalWorkerOptions.workerSrc=BODY_PDF_LIBS.worker;
     await loadExternalScript(BODY_PDF_LIBS.ocr);
     const pdf=await pdfjs.getDocument({data:await file.arrayBuffer()}).promise;
-    if(pdf.numPages!==3)throw new Error('보고서1 형식(3페이지)이 아닙니다');
+    if(pdf.numPages!==2&&pdf.numPages!==3)throw new Error('지원하는 FeelFit 보고서가 아닙니다');
+    pendingBodyPdfPages=pdf.numPages;
     const pages=[];
-    for(let i=1;i<=3;i++){ setPdfStatus(`PDF 페이지 준비 중… ${i}/3`); pages.push(await renderPdfPage(pdf,i,1.65)); }
+    for(let i=1;i<=pdf.numPages;i++){ setPdfStatus(`PDF 페이지 준비 중… ${i}/${pdf.numPages}`); pages.push(await renderPdfPage(pdf,i,1.65)); }
     const worker=await Tesseract.createWorker('eng',1,{logger:m=>{
       if(m.status==='recognizing text')setPdfStatus(`숫자 인식 중… ${Math.round((m.progress||0)*100)}%`);
     }});
     await worker.setParameters({tessedit_char_whitelist:'0123456789.',tessedit_pageseg_mode:'7'});
-    const specs=[
+    const specs=pdf.numPages===2?[
+      ['bcWeight',0,[.26,.342,.11,.018],40,200],
+      ['bcBodyFatMass',0,[.26,.377,.11,.018],2,80],
+      ['bcSkeletalMuscle',0,[.26,.414,.11,.018],10,80],
+      ['bcBmi',0,[.27,.505,.11,.018],10,60],
+      ['bcBodyFatPct',0,[.27,.535,.11,.023],2,60],
+      ['bcVisceralFat',0,[.22,.578,.10,.018],1,30],
+      ['bcSubcutaneousPct',0,[.735,.280,.095,.018],2,60],
+      ['bcBmr',0,[.735,.310,.095,.018],800,3500],
+      ['bcBodyAge',0,[.735,.385,.095,.018],10,100],
+      ['bcBodyWaterPct',1,[.72,.520,.11,.018],30,80],
+      ['bcSmi',1,[.72,.536,.11,.021],3,20],
+      ['bcWhr',1,[.72,.560,.11,.021],.5,1.5],
+    ]:[
       ['bcWeight',0,[.50,.390,.11,.030],40,200],
       ['bcBodyFatMass',0,[.50,.438,.11,.030],2,80],
       ['bcSkeletalMuscle',0,[.50,.462,.11,.040],10,80],
@@ -926,10 +950,10 @@ async function readBodyPdf(event){
     if(weight>0&&height>0)bodyInput('bcBmi',Math.round(weight/((height/100)**2)*10)/10);
     if(weight>0&&bf>0)bodyInput('bcBodyFatMass',Math.round(weight*bf)/100);
     pdfPreview.style.display='block';
-    setPdfStatus('인식 완료 · 아래 숫자를 PDF와 비교한 뒤 저장하세요','good');
+    setPdfStatus(`${pdf.numPages}페이지 형식 인식 완료 · 아래 숫자를 확인한 뒤 저장하세요`,'good');
     pdfPreview.scrollIntoView({behavior:'smooth',block:'start'});
   }catch(e){
-    console.error(e); setPdfStatus((e.message||'PDF 인식 실패')+' · 보고서1 PDF인지 확인해주세요','bad');
+    console.error(e); setPdfStatus((e.message||'PDF 인식 실패')+' · FeelFit PDF인지 확인해주세요','bad');
   }
 }
 function numInput(id){
@@ -943,7 +967,7 @@ function saveBodyComposition(){
   const date=bcDate.value, time=bcTime.value||'00:00', weight=numInput('bcWeight');
   if(!date||weight===null){ toast('측정 날짜와 체중을 확인해주세요'); return; }
   const record={
-    id:`${date}T${time}`,date,time,source:'feelfit-pdf',fileName:pendingBodyPdfName,
+    id:`${date}T${time}`,date,time,source:'feelfit-pdf',fileName:pendingBodyPdfName,reportPages:pendingBodyPdfPages,
     weight,bmi:numInput('bcBmi'),bodyFatPct:numInput('bcBodyFatPct'),bodyFatMass:numInput('bcBodyFatMass'),
     skeletalMuscle:numInput('bcSkeletalMuscle'),bodyWaterPct:numInput('bcBodyWaterPct'),
     visceralFat:numInput('bcVisceralFat'),bmr:numInput('bcBmr'),smi:numInput('bcSmi'),
